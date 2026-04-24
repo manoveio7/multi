@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phaser + Firebase Mobile</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-database-compat.js"></script>
+</head>
+<body style="margin:0; overflow:hidden; background: #222;">
+<script>
+    // --- 1. CONFIGURACIÓN DE TU FIREBASE ---
+    const firebaseConfig = {
+    apiKey: "AIzaSyBH492P6ZztsHUmW8USDj-AwXjh2cYzwV4",
+    authDomain: "phasermultiplayer.firebaseapp.com",
+    projectId: "phasermultiplayer",
+    storageBucket: "phasermultiplayer.firebasestorage.app",
+    messagingSenderId: "1039473102775",
+    appId: "1:1039473102775:web:46391f6a4192f65561a232"
+  };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+    const myId = Math.random().toString(36).substring(7);
+    const playerRef = db.ref(`players/${myId}`);
+
+    // --- 2. LÓGICA DE PHASER ---
+    const config = {
+        type: Phaser.AUTO,
+        width: window.innerWidth,
+        height: window.innerHeight,
+        physics: { default: 'arcade' },
+        scene: { preload: preload, create: create, update: update }
+    };
+
+    const game = new Phaser.Game(config);
+    let mySprite;
+    let others = {};
+
+    function preload() {}
+
+    function create() {
+        const self = this;
+
+        // Crear mi personaje (Cuadrado Verde)
+        mySprite = this.add.rectangle(window.innerWidth/2, window.innerHeight/2, 40, 40, 0x00ff00);
+        
+        // Guardar en la nube y borrar al salir
+        playerRef.set({ x: mySprite.x, y: mySprite.y, id: myId });
+        playerRef.onDisconnect().remove();
+
+        // Escuchar cambios en la base de datos
+        db.ref('players').on('value', (snapshot) => {
+            const playersData = snapshot.val() || {};
+            
+            Object.keys(playersData).forEach(id => {
+                if (id === myId) return;
+
+                if (!others[id]) {
+                    // Si el jugador no existe en mi pantalla, lo creo (Cuadrado Rojo)
+                    others[id] = self.add.rectangle(playersData[id].x, playersData[id].y, 40, 40, 0xff4444);
+                } else {
+                    // Si ya existe, actualizo su posición
+                    others[id].x = playersData[id].x;
+                    others[id].y = playersData[id].y;
+                }
+            });
+
+            // Borrar jugadores que ya no están en Firebase
+            Object.keys(others).forEach(id => {
+                if (!playersData[id]) {
+                    others[id].destroy();
+                    delete others[id];
+                }
+            });
+        });
+
+        // Control Táctil / Mouse
+        this.input.on('pointermove', (pointer) => {
+            if (pointer.isDown) {
+                mySprite.x = pointer.x;
+                mySprite.y = pointer.y;
+                playerRef.update({ x: mySprite.x, y: mySprite.y });
+            }
+        });
+    }
+
+    function update() {}
+</script>
+</body>
+</html>
