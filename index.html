@@ -100,7 +100,7 @@
 
         this.physics.add.overlap(container, foodGroup, (myPlayer, foodItem) => {
             db.ref(`food/${foodItem.foodId}`).remove();
-            score += 10;
+            score += 1;
             document.getElementById('score').innerText = `Puntos: ${score}`;
             const newSize = 40 + (score / 5);
             playerRect.setDisplaySize(newSize, newSize);
