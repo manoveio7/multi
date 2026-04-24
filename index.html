@@ -1,87 +1,92 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Phaser + Firebase Mobile</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <title>Mi Juego Multijugador</title>
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-database-compat.js"></script>
 </head>
-<body style="margin:0; overflow:hidden; background: #222;">
+<body style="margin:0; background: #222;">
 <script>
-    // --- 1. CONFIGURACIÓN DE TU FIREBASE ---
+    // --- 1. CONFIGURACIÓN (TUS DATOS) ---
     const firebaseConfig = {
-    apiKey: "AIzaSyBH492P6ZztsHUmW8USDj-AwXjh2cYzwV4",
-    authDomain: "phasermultiplayer.firebaseapp.com",
-    projectId: "phasermultiplayer",
-    storageBucket: "phasermultiplayer.firebasestorage.app",
-    messagingSenderId: "1039473102775",
-    appId: "1:1039473102775:web:46391f6a4192f65561a232"
-  };
+        apiKey: "AIzaSyBH492P6Zzt sHuMW8USDj-AwXjh2cYzwV4", 
+        authDomain: "phasermultiplayer.firebaseapp.com",
+        databaseURL: "https://phasermultiplayer-default-rtdb.firebaseio.com",
+        projectId: "phasermultiplayer",
+        storageBucket: "phasermultiplayer.firebasestorage.app",
+        messagingSenderId: "1039473102775",
+        appId: "1:1039473102775:web:46391f6a4192f65561a232"
+    };
 
+    // Inicializar Firebase
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
+    
+    // Crear un ID único para ti en esta partida
     const myId = Math.random().toString(36).substring(7);
     const playerRef = db.ref(`players/${myId}`);
 
-    // --- 2. LÓGICA DE PHASER ---
+    // --- 2. JUEGO PHASER ---
     const config = {
         type: Phaser.AUTO,
         width: window.innerWidth,
         height: window.innerHeight,
         physics: { default: 'arcade' },
-        scene: { preload: preload, create: create, update: update }
+        scene: { create: create, update: update }
     };
 
     const game = new Phaser.Game(config);
-    let mySprite;
-    let others = {};
-
-    function preload() {}
+    let player;
+    let otherPlayers = {};
 
     function create() {
         const self = this;
 
-        // Crear mi personaje (Cuadrado Verde)
-        mySprite = this.add.rectangle(window.innerWidth/2, window.innerHeight/2, 40, 40, 0x00ff00);
+        // Mi personaje (Azul para ti)
+        player = this.add.rectangle(window.innerWidth/2, window.innerHeight/2, 50, 50, 0x00aaff);
         
-        // Guardar en la nube y borrar al salir
-        playerRef.set({ x: mySprite.x, y: mySprite.y, id: myId });
+        // Avisar a la nube que entré
+        playerRef.set({ x: player.x, y: player.y, id: myId });
+        
+        // Si cierro la pestaña, me borro automáticamente de la nube
         playerRef.onDisconnect().remove();
 
-        // Escuchar cambios en la base de datos
+        // ESCUCHAR A LOS DEMÁS
         db.ref('players').on('value', (snapshot) => {
-            const playersData = snapshot.val() || {};
+            const data = snapshot.val() || {};
             
-            Object.keys(playersData).forEach(id => {
-                if (id === myId) return;
+            Object.keys(data).forEach(id => {
+                if (id === myId) return; // No dibujarme a mí mismo dos veces
 
-                if (!others[id]) {
-                    // Si el jugador no existe en mi pantalla, lo creo (Cuadrado Rojo)
-                    others[id] = self.add.rectangle(playersData[id].x, playersData[id].y, 40, 40, 0xff4444);
+                if (!otherPlayers[id]) {
+                    // Aparece un nuevo jugador (Naranja)
+                    otherPlayers[id] = self.add.rectangle(data[id].x, data[id].y, 50, 50, 0xff8800);
                 } else {
-                    // Si ya existe, actualizo su posición
-                    others[id].x = playersData[id].x;
-                    others[id].y = playersData[id].y;
+                    // El jugador ya existe, actualizo su posición
+                    otherPlayers[id].x = data[id].x;
+                    otherPlayers[id].y = data[id].y;
                 }
             });
 
-            // Borrar jugadores que ya no están en Firebase
-            Object.keys(others).forEach(id => {
-                if (!playersData[id]) {
-                    others[id].destroy();
-                    delete others[id];
+            // Borrar si alguien se desconectó
+            Object.keys(otherPlayers).forEach(id => {
+                if (!data[id]) {
+                    otherPlayers[id].destroy();
+                    delete otherPlayers[id];
                 }
             });
         });
 
-        // Control Táctil / Mouse
+        // CONTROL TÁCTIL (Ideal para tu S25 Ultra)
         this.input.on('pointermove', (pointer) => {
             if (pointer.isDown) {
-                mySprite.x = pointer.x;
-                mySprite.y = pointer.y;
-                playerRef.update({ x: mySprite.x, y: mySprite.y });
+                player.x = pointer.x;
+                player.y = pointer.y;
+                // Enviar mi nueva posición a la nube
+                playerRef.update({ x: player.x, y: player.y });
             }
         });
     }
