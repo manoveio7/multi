@@ -41,7 +41,10 @@
         width: window.innerWidth,
         height: window.innerHeight,
         physics: { default: 'arcade' },
-        scene: { create: create }
+        scene: { 
+            create: create,
+            update: update // Añadimos la función update aquí
+        }
     };
 
     const game = new Phaser.Game(config);
@@ -50,6 +53,11 @@
     let foodGroup;
     let score = 0;
     const myColor = Math.random() * 0xffffff;
+    
+    // Variables para el movimiento LERP
+    let targetX = 400;
+    let targetY = 300;
+    const lerpSpeed = 0.15; // Ajusta este valor (0.05 lento - 0.5 rápido)
 
     function create() {
         const self = this;
@@ -58,17 +66,16 @@
         player = this.add.rectangle(400, 300, 40, 40, myColor);
         this.physics.add.existing(player);
         
+        targetX = player.x;
+        targetY = player.y;
+
         playerRef.set({ x: player.x, y: player.y, id: myId, color: myColor, score: 0, size: 40 });
         playerRef.onDisconnect().remove();
 
-        // --- LÓGICA DE COMIDA CONTROLADA (Máx 2) ---
-        
-        // Función para reponer comida si falta
         const replenishFood = () => {
             foodRef.once('value', (snapshot) => {
                 const currentFoodCount = snapshot.numChildren();
                 if (currentFoodCount < 2) {
-                    // Solo agregamos las que faltan para llegar a 2
                     const toAdd = 2 - currentFoodCount;
                     for(let i=0; i<toAdd; i++) {
                         foodRef.push({
@@ -80,7 +87,6 @@
             });
         };
 
-        // Al iniciar, intentamos llenar el cupo de 2
         replenishFood();
 
         foodRef.on('child_added', (snapshot) => {
@@ -95,7 +101,6 @@
             foodGroup.getChildren().forEach(child => {
                 if (child.foodId === snapshot.key) child.destroy();
             });
-            // Cada vez que alguien come, intentamos reponer para que siempre haya 2
             replenishFood();
         });
 
@@ -108,7 +113,6 @@
             playerRef.update({ score: score, size: newSize });
         });
 
-        // --- SINCRONIZACIÓN DE JUGADORES ---
         db.ref('players').on('value', (snapshot) => {
             const playersData = snapshot.val() || {};
             Object.keys(playersData).forEach(id => {
@@ -118,6 +122,7 @@
                     otherPlayers[id] = self.add.rectangle(p.x, p.y, p.size, p.size, p.color);
                 } else {
                     const p = playersData[id];
+                    // Para otros jugadores, también podrías aplicar LERP aquí para que no se vean "laggeados"
                     otherPlayers[id].setPosition(p.x, p.y);
                     otherPlayers[id].setDisplaySize(p.size, p.size);
                 }
@@ -127,13 +132,32 @@
             });
         });
 
+        // Solo actualizamos el objetivo del movimiento
         this.input.on('pointermove', (pointer) => {
             if (pointer.isDown) {
-                player.x = pointer.x;
-                player.y = pointer.y;
-                playerRef.update({ x: player.x, y: player.y });
+                targetX = pointer.x;
+                targetY = pointer.y;
             }
         });
+        
+        this.input.on('pointerdown', (pointer) => {
+            targetX = pointer.x;
+            targetY = pointer.y;
+        });
+    }
+
+    function update() {
+        if (!player) return;
+
+        // --- LÓGICA LERP DE PHASER 3 ---
+        // Interpolamos la posición actual hacia la posición del objetivo
+        player.x = Phaser.Math.Linear(player.x, targetX, lerpSpeed);
+        player.y = Phaser.Math.Linear(player.y, targetY, lerpSpeed);
+
+        // Enviamos la posición a Firebase (solo si ha cambiado significativamente para ahorrar ancho de banda)
+        if (Math.abs(player.x - targetX) > 0.1 || Math.abs(player.y - targetY) > 0.1) {
+            playerRef.update({ x: player.x, y: player.y });
+        }
     }
 
     window.addEventListener('resize', () => { game.scale.resize(window.innerWidth, window.innerHeight); });
