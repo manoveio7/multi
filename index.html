@@ -3,14 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
-    <title>Mi Juego Multijugador</title>
+    <title>Square Battle: Comida Sincronizada</title>
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-database-compat.js"></script>
+    <style>
+        body { margin: 0; background: #1a1a1a; overflow: hidden; font-family: sans-serif; }
+        #ui { position: fixed; top: 10px; left: 10px; color: white; pointer-events: none; z-index: 10; }
+    </style>
 </head>
-<body style="margin:0; background: #222;">
+<body>
+    <div id="ui">
+        <div id="score">Puntos: 0</div>
+        <div id="status">Conectando a la arena...</div>
+    </div>
+
 <script>
-    // --- 1. CONFIGURACIÓN (TUS DATOS) ---
+    // --- 1. CONFIGURACIÓN FIREBASE (Sustituye con tus datos) ---
     const firebaseConfig = {
         apiKey: "AIzaSyBH492P6Zzt sHuMW8USDj-AwXjh2cYzwV4", 
         authDomain: "phasermultiplayer.firebaseapp.com",
@@ -21,77 +30,147 @@
         appId: "1:1039473102775:web:46391f6a4192f65561a232"
     };
 
-    // Inicializar Firebase
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
-    
-    // Crear un ID único para ti en esta partida
     const myId = Math.random().toString(36).substring(7);
     const playerRef = db.ref(`players/${myId}`);
+    const foodRef = db.ref('food');
 
-    // --- 2. JUEGO PHASER ---
+    // --- 2. CONFIGURACIÓN DEL JUEGO ---
     const config = {
         type: Phaser.AUTO,
         width: window.innerWidth,
         height: window.innerHeight,
-        physics: { default: 'arcade' },
-        scene: { create: create, update: update }
+        physics: {
+            default: 'arcade',
+            arcade: { debug: false }
+        },
+        scene: { preload: preload, create: create, update: update }
     };
 
     const game = new Phaser.Game(config);
     let player;
     let otherPlayers = {};
+    let foodGroup;
+    let score = 0;
+    const myColor = Math.random() * 0xffffff;
+
+    function preload() {}
 
     function create() {
         const self = this;
+        foodGroup = this.physics.add.group();
 
-        // Mi personaje (Azul para ti)
-        player = this.add.rectangle(window.innerWidth/2, window.innerHeight/2, 50, 50, 0x00aaff);
+        // Crear mi jugador
+        player = this.add.rectangle(400, 300, 40, 40, myColor);
+        this.physics.add.existing(player);
         
-        // Avisar a la nube que entré
-        playerRef.set({ x: player.x, y: player.y, id: myId });
-        
-        // Si cierro la pestaña, me borro automáticamente de la nube
+        // Sincronizar mi estado inicial
+        playerRef.set({
+            x: player.x,
+            y: player.y,
+            id: myId,
+            color: myColor,
+            score: 0,
+            size: 40
+        });
         playerRef.onDisconnect().remove();
 
-        // ESCUCHAR A LOS DEMÁS
-        db.ref('players').on('value', (snapshot) => {
-            const data = snapshot.val() || {};
+        // --- LÓGICA DE COMIDA ---
+        // Solo el primer jugador que entra crea comida si no hay
+        foodRef.once('value', (snapshot) => {
+            if (!snapshot.exists()) {
+                generateFood(20); // Crear 20 piezas de comida iniciales
+            }
+        });
+
+        // Escuchar comida en tiempo real
+        foodRef.on('child_added', (snapshot) => {
+            const f = snapshot.val();
+            const foodItem = self.add.circle(f.x, f.y, 8, 0xffff00);
+            foodItem.foodId = snapshot.key;
+            foodGroup.add(foodItem);
+            this.physics.add.existing(foodItem);
+        });
+
+        foodRef.on('child_removed', (snapshot) => {
+            foodGroup.getChildren().forEach(child => {
+                if (child.foodId === snapshot.key) child.destroy();
+            });
+        });
+
+        // Colisión: Yo con la comida
+        this.physics.add.overlap(player, foodGroup, (myPlayer, foodItem) => {
+            // Eliminar de Firebase (esto avisa a todos)
+            db.ref(`food/${foodItem.foodId}`).remove();
             
-            Object.keys(data).forEach(id => {
-                if (id === myId) return; // No dibujarme a mí mismo dos veces
+            // Crecer y sumar puntos
+            score += 10;
+            document.getElementById('score').innerText = `Puntos: ${score}`;
+            
+            const newSize = 40 + (score / 10);
+            player.setDisplaySize(newSize, newSize);
+
+            // Actualizar mi estado en la nube
+            playerRef.update({ score: score, size: newSize });
+
+            // Si queda poca comida, generar una nueva pieza aleatoria
+            if (foodGroup.getLength() < 5) {
+                generateFood(1);
+            }
+        });
+
+        // --- LÓGICA DE OTROS JUGADORES ---
+        db.ref('players').on('value', (snapshot) => {
+            const playersData = snapshot.val() || {};
+            document.getElementById('status').innerText = `Jugadores online: ${Object.keys(playersData).length}`;
+
+            Object.keys(playersData).forEach(id => {
+                if (id === myId) return;
 
                 if (!otherPlayers[id]) {
-                    // Aparece un nuevo jugador (Naranja)
-                    otherPlayers[id] = self.add.rectangle(data[id].x, data[id].y, 50, 50, 0xff8800);
+                    const pInfo = playersData[id];
+                    otherPlayers[id] = self.add.rectangle(pInfo.x, pInfo.y, pInfo.size, pInfo.size, pInfo.color);
                 } else {
-                    // El jugador ya existe, actualizo su posición
-                    otherPlayers[id].x = data[id].x;
-                    otherPlayers[id].y = data[id].y;
+                    const pInfo = playersData[id];
+                    otherPlayers[id].setPosition(pInfo.x, pInfo.y);
+                    otherPlayers[id].setDisplaySize(pInfo.size, pInfo.size);
                 }
             });
 
-            // Borrar si alguien se desconectó
             Object.keys(otherPlayers).forEach(id => {
-                if (!data[id]) {
+                if (!playersData[id]) {
                     otherPlayers[id].destroy();
                     delete otherPlayers[id];
                 }
             });
         });
 
-        // CONTROL TÁCTIL (Ideal para tu S25 Ultra)
+        // Control táctil
         this.input.on('pointermove', (pointer) => {
             if (pointer.isDown) {
                 player.x = pointer.x;
                 player.y = pointer.y;
-                // Enviar mi nueva posición a la nube
                 playerRef.update({ x: player.x, y: player.y });
             }
         });
     }
 
     function update() {}
+
+    function generateFood(amount) {
+        for (let i = 0; i < amount; i++) {
+            foodRef.push({
+                x: Math.random() * window.innerWidth,
+                y: Math.random() * window.innerHeight
+            });
+        }
+    }
+
+    // Ajustar al cambiar tamaño de pantalla
+    window.addEventListener('resize', () => {
+        game.scale.resize(window.innerWidth, window.innerHeight);
+    });
 </script>
 </body>
 </html>
