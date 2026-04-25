@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <title>Square Battle: Perfect Sync</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-database-compat.js"></script>
+    <style> body { margin: 0; background: #000; overflow: hidden; } </style>
+</head>
+<body>
+<script>
+    const myName = prompt("¿Tu nombre?", "Jugador") || "Anónimo";
+    const firebaseConfig = {
+        apiKey: "AIzaSyBH492P6Zzt sHuMW8USDj-AwXjh2cYzwV4", 
+        databaseURL: "https://phasermultiplayer-default-rtdb.firebaseio.com",
+        projectId: "phasermultiplayer",
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+    const myId = Math.random().toString(36).substring(7);
+    
+    const config = {
+        type: Phaser.AUTO,
+        scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH, width: 450, height: 800 },
+        physics: { default: 'arcade' },
+        scene: { create: create, update: update }
+    };
+
+    const game = new Phaser.Game(config);
+    let container, myRect, foodGroup, obstaclesGroup;
+    let uiScore, uiLeader;
+    let otherPlayers = {}; 
+    let score = 0, isFrozen = false;
+    let targetX = 225, targetY = 400;
+
+    function create() {
+        const self = this;
+        foodGroup = this.physics.add.group();
+        obstaclesGroup = this.physics.add.group();
+
+        // UI fija
+        uiLeader = this.add.text(225, 50, '👑 LÍDER: ---', { fontSize: '22px', fill: '#ffcc00', fontWeight: 'bold' }).setOrigin(0.5).setDepth(100);
+        uiScore = this.add.text(20, 20, 'Comidas: 0', { fontSize: '18px', fill: '#fff' }).setDepth(100);
+
+        // 1. OBSTÁCULOS (3 fijos con colisión real)
+        const pos = [{x:120,y:250}, {x:330,y:450}, {x:225,y:650}];
+        pos.forEach(p => {
+            let obs = self.add.circle(p.x, p.y, 25, 0xff0000);
+            obstaclesGroup.add(obs);
+            self.physics.add.existing(obs);
+            obs.body.setCircle(25);
+            obs.body.setImmovable(true);
+        });
+
+        // 2. SINCRONIZACIÓN DE JUGADORES Y LÍDER
+        db.ref('players').on('value', snap => {
+            const data = snap.val() || {};
+            let topScore = -1;
+            let topName = "---";
+
+            // Limpiar los que se fueron
+            Object.keys(otherPlayers).forEach(id => {
+                if (!data[id]) { otherPlayers[id].destroy(); delete otherPlayers[id]; }
+            });
+
+            Object.keys(data).forEach(id => {
+                const p = data[id];
+                // Lógica de líder
+                if (p.score > topScore) { topScore = p.score; topName = p.name; }
+
+                if (id === myId) return;
+
+                // Crear o mover con validación de seguridad
+                if (!otherPlayers[id]) {
+                    const r = self.add.rectangle(0, 0, 40, 40, p.color || 0x00ff00);
+                    const t = self.add.text(0, -35, p.name || 'Jugador', { fontSize: '12px', fill: '#fff' }).setOrigin(0.5);
+                    otherPlayers[id] = self.add.container(p.x, p.y, [r, t]);
+                } else if (otherPlayers[id].active) {
+                    otherPlayers[id].setPosition(p.x, p.y);
+                    const rect = otherPlayers[id].list[0];
+                    if (rect) rect.setDisplaySize(p.size || 40, p.size || 40);
+                }
+            });
+            uiLeader.setText(`👑 LÍDER: ${topName} (${topScore >= 0 ? topScore : 0})`);
+        });
+
+        // 3. COMIDAS
+        db.ref('food').on('value', snap => {
+            foodGroup.clear(true, true);
+            const data = snap.val() || {};
+            Object.keys(data).forEach(key => {
+                const f = data[key];
+                const dot = self.add.circle(f.x, f.y, 10, 0xffff00);
+                dot.foodId = key;
+                foodGroup.add(dot);
+                self.physics.add.existing(dot);
+            });
+        });
+
+        // MI JUGADOR (Local)
+        const myColor = Math.random() * 0xffffff;
+        myRect = this.add.rectangle(0, 0, 40, 40, myColor);
+        const myTxt = this.add.text(0, -35, myName, { fontSize: '14px', fill: '#fff' }).setOrigin(0.5);
+        container = this.add.container(225, 400, [myRect, myTxt]);
+        this.physics.add.existing(container);
+
+        db.ref(`players/${myId}`).set({ x: 225, y: 400, name: myName, color: myColor, score: 0, size: 40 });
+        db.ref(`players/${myId}`).onDisconnect().remove();
+
+        // COLISIONES
+        this.physics.add.overlap(container, foodGroup, (p, f) => {
+            db.ref(`food/${f.foodId}`).remove();
+            score++;
+            uiScore.setText(`Comidas: ${score}`);
+            myRect.setDisplaySize(40 + score*2, 40 + score*2);
+            db.ref(`players/${myId}`).update({ score: score, size: 40 + score*2 });
+            // Generar nueva comida en sitio azar
+            db.ref('food').push({ x: Phaser.Math.Between(50, 400), y: Phaser.Math.Between(100, 700) });
+        });
+
+        this.physics.add.overlap(container, obstaclesGroup, () => {
+            if (!isFrozen) {
+                isFrozen = true;
+                container.setAlpha(0.3);
+                self.time.delayedCall(1500, () => { isFrozen = false; container.setAlpha(1); });
+            }
+        });
+
+        this.input.on('pointermove', p => { if(p.isDown) { targetX = p.worldX; targetY = p.worldY; }});
+        this.input.on('pointerdown', p => { targetX = p.worldX; targetY = p.worldY; });
+    }
+
+    function update() {
+        if (!container || isFrozen) return;
+        container.x = Phaser.Math.Linear(container.x, targetX, 0.1);
+        container.y = Phaser.Math.Linear(container.y, targetY, 0.1);
+        
+        // Sincronizar solo cada 3 frames para no saturar
+        if (game.loop.frame % 3 === 0) {
+            db.ref(`players/${myId}`).update({ x: container.x, y: container.y });
+        }
+    }
+</script>
+</body>
+</html>
