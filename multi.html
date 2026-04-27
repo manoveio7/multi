@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <title>Square Battle: Final Championship</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-database-compat.js"></script>
+    <style>
+        body { margin: 0; background: #1a1a1a; overflow: hidden; }
+    </style>
+</head>
+<body>
+<script>
+    // --- CONFIGURACIÓN FIREBASE ---
+    const firebaseConfig = {
+        apiKey: "AIzaSyBH492P6Zzt sHuMW8USDj-AwXjh2cYzwV4", 
+        authDomain: "phasermultiplayer.firebaseapp.com",
+        databaseURL: "https://phasermultiplayer-default-rtdb.firebaseio.com",
+        projectId: "phasermultiplayer",
+        storageBucket: "phasermultiplayer.firebasestorage.app",
+        messagingSenderId: "1039473102775",
+        appId: "1:1039473102775:web:46391f6a4192f65561a232"
+    };
+    
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+    
+    const myId = Math.random().toString(36).substring(7);
+    const WIN_SCORE = 20;
+
+    const obstacleRadius = 50; 
+    const obstaclePositions = [{ x: 0.25, y: 0.25 }, { x: 0.75, y: 0.30 }, { x: 0.50, y: 0.80 }];
+
+    const config = {
+        type: Phaser.AUTO,
+        width: window.innerWidth,
+        height: window.innerHeight,
+        physics: { default: 'arcade', arcade: { debug: false } },
+        scene: { create: create }
+    };
+
+    const game = new Phaser.Game(config);
+    let player, foodGroup, obstacles, isStunned = false, score = 0, otherPlayers = {};
+    let scoreText, statusText, leaderText;
+    let hasWon = false;
+
+    function create() {
+        const self = this;
+        const centerX = window.innerWidth / 2;
+        const centerY = window.innerHeight / 2;
+
+        foodGroup = this.physics.add.group();
+        obstacles = this.physics.add.staticGroup();
+
+        // --- UI SUPERIOR ---
+        const baseStyle = {
+            fontFamily: 'Arial Black, sans-serif',
+            fill: '#ffffff',
+            align: 'center',
+            stroke: '#000000',
+            strokeThickness: 4,
+            shadow: { offsetX: 2, offsetY: 2, color: '#000', blur: 2, fill: true }
+        };
+
+        scoreText = this.add.text(centerX, 40, 'PUNTOS: 0', { ...baseStyle, fontSize: '32px' }).setOrigin(0.5).setDepth(10);
+        leaderText = this.add.text(centerX, 85, 'BUSCANDO LÍDER...', { ...baseStyle, fontSize: '18px', fill: '#00ffcc' }).setOrigin(0.5).setDepth(10);
+        statusText = this.add.text(centerX, 115, 'PRIMERO EN LLEGAR A 20 GANA', { ...baseStyle, fontSize: '12px', fill: '#ffcc00', strokeThickness: 2 }).setOrigin(0.5).setDepth(10);
+
+        // --- OBSTÁCULOS ---
+        obstaclePositions.forEach(pos => {
+            const rx = window.innerWidth * pos.x;
+            const ry = window.innerHeight * pos.y;
+            const circle = this.add.circle(rx, ry, obstacleRadius, 0xff0000);
+            obstacles.add(circle);
+            circle.body.setCircle(obstacleRadius);
+            circle.body.updateFromGameObject();
+            pos.realX = rx; pos.realY = ry;
+        });
+
+        // --- JUGADOR ---
+        player = this.add.rectangle(centerX, window.innerHeight/2, 40, 40, Math.random() * 0xffffff);
+        this.physics.add.existing(player);
+        const playerRef = db.ref(`players/${myId}`);
+        playerRef.set({ x: player.x, y: player.y, id: myId, color: player.fillColor, score: 0 });
+        playerRef.onDisconnect().remove();
+
+        this.physics.add.collider(player, obstacles, (p, obs) => {
+            if (isStunned || hasWon) return;
+            isStunned = true;
+            const angle = Phaser.Math.Angle.Between(obs.x, obs.y, p.x, p.y);
+            p.x += Math.cos(angle) * 50; p.y += Math.sin(angle) * 50;
+            this.tweens.add({ targets: p, alpha: 0.2, duration: 80, yoyo: true, repeat: 3, onComplete: () => { p.alpha = 1; isStunned = false; }});
+        });
+
+        // --- LÓGICA DE COMIDA ---
+        const replenishFood = () => {
+            db.ref('food').once('value', (snap) => {
+                if (snap.numChildren() < 2) {
+                    let fx, fy, safe;
+                    do {
+                        fx = Phaser.Math.Between(50, window.innerWidth - 50);
+                        fy = Phaser.Math.Between(50, window.innerHeight - 50);
+                        safe = true;
+                        obstaclePositions.forEach(obs => {
+                            if (Phaser.Math.Distance.Between(fx, fy, obs.realX, obs.realY) < (obstacleRadius + 30)) safe = false;
+                        });
+                    } while (!safe);
+                    db.ref('food').push({ x: fx, y: fy });
+                }
+            });
+        };
+        replenishFood();
+
+        db.ref('food').on('child_added', (snap) => {
+            const f = snap.val();
+            const dot = self.add.circle(f.x, f.y, 10, 0xffff00);
+            dot.foodId = snap.key;
+            foodGroup.add(dot);
+            this.physics.add.existing(dot);
+        });
+
+        db.ref('food').on('child_removed', (snap) => {
+            foodGroup.getChildren().forEach(c => { if(c.foodId === snap.key) c.destroy(); });
+            replenishFood();
+        });
+
+        // --- CARTEL DE FINALIZACIÓN ---
+        const showEndPanel = (isWinner, winnerName) => {
+            hasWon = true;
+            
+            // Fondo oscuro semitransparente
+            const overlay = self.add.rectangle(centerX, centerY, window.innerWidth, window.innerHeight, 0x000000, 0.8).setDepth(1000);
+            
+            // Texto principal
+            const titleText = isWinner ? "¡VICTORIA!" : "¡HAS PERDIDO!";
+            const titleColor = isWinner ? "#00ff00" : "#ff3333";
+            const mainMsg = self.add.text(centerX, centerY - 50, titleText, {
+                ...baseStyle, fontSize: '64px', fill: titleColor
+            }).setOrigin(0.5).setDepth(1001);
+
+            const subtitle = self.add.text(centerX, centerY + 20, `Ganador: ${winnerName}`, {
+                ...baseStyle, fontSize: '24px'
+            }).setOrigin(0.5).setDepth(1001);
+
+            // Botón de Reiniciar
+            const btnBg = self.add.rectangle(centerX, centerY + 100, 200, 50, 0xffffff).setDepth(1001).setInteractive({ useHandCursor: true });
+            const btnText = self.add.text(centerX, centerY + 100, "REINICIAR", {
+                fontFamily: 'Arial Black', fontSize: '20px', fill: '#000000'
+            }).setOrigin(0.5).setDepth(1002);
+
+            btnBg.on('pointerdown', () => {
+                db.ref('players').remove();
+                db.ref('food').remove();
+                location.reload();
+            });
+
+            // Animación de entrada
+            mainMsg.setScale(0);
+            self.tweens.add({ targets: [mainMsg, subtitle], scale: 1, duration: 500, ease: 'Back.out' });
+        };
+
+        this.physics.add.overlap(player, foodGroup, (p, f) => {
+            if (hasWon) return;
+            db.ref(`food/${f.foodId}`).remove();
+            score += 1;
+            scoreText.setText(`PUNTOS: ${score}`);
+            
+            if (score >= WIN_SCORE) {
+                showEndPanel(true, "TÚ");
+            }
+            playerRef.update({ score: score });
+        });
+
+        // --- SINCRONIZACIÓN Y LÍDER ---
+        db.ref('players').on('value', (snap) => {
+            const data = snap.val() || {};
+            let maxScore = -1;
+            let leaderId = "";
+
+            Object.keys(data).forEach(id => {
+                const pScore = data[id].score;
+                if (pScore > maxScore) {
+                    maxScore = pScore;
+                    leaderId = id;
+                }
+
+                if (pScore >= WIN_SCORE && id !== myId && !hasWon) {
+                    showEndPanel(false, id.toUpperCase());
+                }
+
+                if (id === myId) return;
+                if (!otherPlayers[id]) otherPlayers[id] = self.add.rectangle(0,0,40,40, data[id].color);
+                otherPlayers[id].setPosition(data[id].x, data[id].y);
+            });
+
+            if (leaderId === myId) {
+                leaderText.setText('⭐ VAS LIDERANDO ⭐').setFill('#00ff00');
+            } else if (leaderId !== "") {
+                leaderText.setText(`LÍDER: ${leaderId.toUpperCase()} (${maxScore})`).setFill('#ff5555');
+            }
+            Object.keys(otherPlayers).forEach(id => { if(!data[id]) { otherPlayers[id].destroy(); delete otherPlayers[id]; } });
+        });
+
+        // --- MOVIMIENTO ---
+        this.input.on('pointermove', (ptr) => {
+            if (ptr.isDown && !isStunned && !hasWon) {
+                player.setPosition(ptr.x, ptr.y);
+                playerRef.update({ x: player.x, y: player.y });
+            }
+        });
+    }
+</script>
+</body>
+</html>
