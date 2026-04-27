@@ -27,9 +27,12 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
     
+    // --- PREPARACIÓN INICIAL ---
+    let myName = prompt("Ingresa tu nombre de batalla:", "JUGADOR") || "INVITADO";
+    myName = myName.substring(0, 10).toUpperCase();
+
     const myId = Math.random().toString(36).substring(7);
     const WIN_SCORE = 20;
-
     const obstacleRadius = 50; 
     const obstaclePositions = [{ x: 0.25, y: 0.25 }, { x: 0.75, y: 0.30 }, { x: 0.50, y: 0.80 }];
 
@@ -42,7 +45,7 @@
     };
 
     const game = new Phaser.Game(config);
-    let player, foodGroup, obstacles, isStunned = false, score = 0, otherPlayers = {};
+    let playerContainer, foodGroup, obstacles, isStunned = false, score = 0, otherPlayers = {};
     let scoreText, statusText, leaderText;
     let hasWon = false;
 
@@ -54,57 +57,58 @@
         foodGroup = this.physics.add.group();
         obstacles = this.physics.add.staticGroup();
 
-        // --- UI SUPERIOR ---
+        // UI SUPERIOR
         const baseStyle = {
             fontFamily: 'Arial Black, sans-serif',
-            fill: '#ffffff',
-            align: 'center',
-            stroke: '#000000',
-            strokeThickness: 4,
-            shadow: { offsetX: 2, offsetY: 2, color: '#000', blur: 2, fill: true }
+            fill: '#ffffff', align: 'center', stroke: '#ffffff', strokeThickness: 6 
         };
 
-        scoreText = this.add.text(centerX, 40, 'PUNTOS: 0', { ...baseStyle, fontSize: '32px' }).setOrigin(0.5).setDepth(10);
-        leaderText = this.add.text(centerX, 85, 'BUSCANDO LÍDER...', { ...baseStyle, fontSize: '18px', fill: '#00ffcc' }).setOrigin(0.5).setDepth(10);
-        statusText = this.add.text(centerX, 115, 'PRIMERO EN LLEGAR A 20 GANA', { ...baseStyle, fontSize: '12px', fill: '#ffcc00', strokeThickness: 2 }).setOrigin(0.5).setDepth(10);
+        scoreText = this.add.text(centerX, 40, 'PUNTOS: 0', { ...baseStyle, fontSize: '32px',fill: '#000000', strokeThickness: 5  }).setOrigin(0.5).setDepth(20);
+        leaderText = this.add.text(centerX, 85, 'ESPERANDO JUGADORES...', { ...baseStyle, fontSize: '20px', fill: '#00ffcc',strokeThickness: 0 }).setOrigin(0.5).setDepth(20);
+        statusText = this.add.text(centerX, 115, 'PRIMERO EN LLEGAR A 20 GANA', { ...baseStyle, fontSize: '12px', fill: '#ffcc00', strokeThickness: 0 }).setOrigin(0.5).setDepth(20);
 
-        // --- OBSTÁCULOS ---
+        // OBSTÁCULOS
         obstaclePositions.forEach(pos => {
-            const rx = window.innerWidth * pos.x;
-            const ry = window.innerHeight * pos.y;
-            const circle = this.add.circle(rx, ry, obstacleRadius, 0xff0000);
+            const circle = this.add.circle(window.innerWidth * pos.x, window.innerHeight * pos.y, obstacleRadius, 0xff0000);
             obstacles.add(circle);
             circle.body.setCircle(obstacleRadius);
             circle.body.updateFromGameObject();
-            pos.realX = rx; pos.realY = ry;
+            pos.realX = circle.x; pos.realY = circle.y;
         });
 
-        // --- JUGADOR ---
-        player = this.add.rectangle(centerX, window.innerHeight/2, 40, 40, Math.random() * 0xffffff);
-        this.physics.add.existing(player);
+        // JUGADOR LOCAL
+        const playerColor = Math.random() * 0xffffff;
+        const playerRect = this.add.rectangle(0, 0, 40, 40, playerColor);
+        const nameTag = this.add.text(0, -35, myName, { fontSize: '14px', fontFamily: 'Arial Black', fill: '#ffffff', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
+        
+        playerContainer = this.add.container(centerX, centerY, [playerRect, nameTag]);
+        playerContainer.setSize(40, 40);
+        this.physics.add.existing(playerContainer);
+
         const playerRef = db.ref(`players/${myId}`);
-        playerRef.set({ x: player.x, y: player.y, id: myId, color: player.fillColor, score: 0 });
+        playerRef.set({ x: playerContainer.x, y: playerContainer.y, id: myId, name: myName, color: playerColor, score: 0 });
         playerRef.onDisconnect().remove();
 
-        this.physics.add.collider(player, obstacles, (p, obs) => {
+        // COLISIÓN
+        this.physics.add.collider(playerContainer, obstacles, (p, obs) => {
             if (isStunned || hasWon) return;
             isStunned = true;
             const angle = Phaser.Math.Angle.Between(obs.x, obs.y, p.x, p.y);
-            p.x += Math.cos(angle) * 50; p.y += Math.sin(angle) * 50;
-            this.tweens.add({ targets: p, alpha: 0.2, duration: 80, yoyo: true, repeat: 3, onComplete: () => { p.alpha = 1; isStunned = false; }});
+            p.x += Math.cos(angle) * 60; p.y += Math.sin(angle) * 60;
+            this.tweens.add({ targets: p, alpha: 0.2, duration: 80, yoyo: true, repeat: 7, onComplete: () => { p.alpha = 1; isStunned = false; }});
         });
 
-        // --- LÓGICA DE COMIDA ---
+        // LÓGICA DE COMIDA
         const replenishFood = () => {
             db.ref('food').once('value', (snap) => {
-                if (snap.numChildren() < 2) {
+                if (snap.numChildren() < 3) {
                     let fx, fy, safe;
                     do {
                         fx = Phaser.Math.Between(50, window.innerWidth - 50);
                         fy = Phaser.Math.Between(50, window.innerHeight - 50);
                         safe = true;
                         obstaclePositions.forEach(obs => {
-                            if (Phaser.Math.Distance.Between(fx, fy, obs.realX, obs.realY) < (obstacleRadius + 30)) safe = false;
+                            if (Phaser.Math.Distance.Between(fx, fy, obs.realX, obs.realY) < (obstacleRadius + 35)) safe = false;
                         });
                     } while (!safe);
                     db.ref('food').push({ x: fx, y: fy });
@@ -126,88 +130,70 @@
             replenishFood();
         });
 
-        // --- CARTEL DE FINALIZACIÓN ---
+        // FINAL DEL JUEGO
         const showEndPanel = (isWinner, winnerName) => {
+            if(hasWon) return;
             hasWon = true;
+            self.add.rectangle(centerX, centerY, window.innerWidth, window.innerHeight, 0x000000, 0.8).setDepth(1000);
+            self.add.text(centerX, centerY - 50, isWinner ? "¡VICTORIA!" : "¡HAS PERDIDO!", { ...baseStyle, fontSize: '64px', fill: isWinner ? "#00ff00" : "#ff3333" }).setOrigin(0.5).setDepth(1001);
+            self.add.text(centerX, centerY + 20, `GANADOR: ${winnerName}`, { ...baseStyle, fontSize: '24px' }).setOrigin(0.5).setDepth(1001);
             
-            // Fondo oscuro semitransparente
-            const overlay = self.add.rectangle(centerX, centerY, window.innerWidth, window.innerHeight, 0x000000, 0.8).setDepth(1000);
-            
-            // Texto principal
-            const titleText = isWinner ? "¡VICTORIA!" : "¡HAS PERDIDO!";
-            const titleColor = isWinner ? "#00ff00" : "#ff3333";
-            const mainMsg = self.add.text(centerX, centerY - 50, titleText, {
-                ...baseStyle, fontSize: '64px', fill: titleColor
-            }).setOrigin(0.5).setDepth(1001);
-
-            const subtitle = self.add.text(centerX, centerY + 20, `Ganador: ${winnerName}`, {
-                ...baseStyle, fontSize: '24px'
-            }).setOrigin(0.5).setDepth(1001);
-
-            // Botón de Reiniciar
-            const btnBg = self.add.rectangle(centerX, centerY + 100, 200, 50, 0xffffff).setDepth(1001).setInteractive({ useHandCursor: true });
-            const btnText = self.add.text(centerX, centerY + 100, "REINICIAR", {
-                fontFamily: 'Arial Black', fontSize: '20px', fill: '#000000'
-            }).setOrigin(0.5).setDepth(1002);
-
-            btnBg.on('pointerdown', () => {
-                db.ref('players').remove();
-                db.ref('food').remove();
-                location.reload();
-            });
-
-            // Animación de entrada
-            mainMsg.setScale(0);
-            self.tweens.add({ targets: [mainMsg, subtitle], scale: 1, duration: 500, ease: 'Back.out' });
+            const btn = self.add.rectangle(centerX, centerY + 100, 200, 50, 0xffffff).setDepth(1001).setInteractive({ useHandCursor: true });
+            self.add.text(centerX, centerY + 100, "REINICIAR", { fontFamily: 'Arial Black', fontSize: '20px', fill: '#000000' }).setOrigin(0.5).setDepth(1002);
+            btn.on('pointerdown', () => { db.ref().remove(); location.reload(); });
         };
 
-        this.physics.add.overlap(player, foodGroup, (p, f) => {
+        this.physics.add.overlap(playerContainer, foodGroup, (p, f) => {
             if (hasWon) return;
             db.ref(`food/${f.foodId}`).remove();
-            score += 1;
+            score++;
             scoreText.setText(`PUNTOS: ${score}`);
-            
-            if (score >= WIN_SCORE) {
-                showEndPanel(true, "TÚ");
-            }
+            if (score >= WIN_SCORE) showEndPanel(true, myName);
             playerRef.update({ score: score });
         });
 
-        // --- SINCRONIZACIÓN Y LÍDER ---
+        // SINCRONIZACIÓN Y ARREGLO DE TEXTO DEL LÍDER
         db.ref('players').on('value', (snap) => {
             const data = snap.val() || {};
             let maxScore = -1;
-            let leaderId = "";
+            let leaderName = "";
+            let leaderColor = "#00ffcc";
 
             Object.keys(data).forEach(id => {
-                const pScore = data[id].score;
-                if (pScore > maxScore) {
-                    maxScore = pScore;
-                    leaderId = id;
+                const p = data[id];
+                if (p.score > maxScore) {
+                    maxScore = p.score;
+                    leaderName = p.name || "S/N";
+                    // Asegurar que el color sea un string hexadecimal válido
+                    leaderColor = p.color ? "#" + parseInt(p.color).toString(16).padStart(6, '0') : "#ffffff";
                 }
 
-                if (pScore >= WIN_SCORE && id !== myId && !hasWon) {
-                    showEndPanel(false, id.toUpperCase());
-                }
+                if (p.score >= WIN_SCORE && id !== myId && !hasWon) showEndPanel(false, p.name);
 
                 if (id === myId) return;
-                if (!otherPlayers[id]) otherPlayers[id] = self.add.rectangle(0,0,40,40, data[id].color);
-                otherPlayers[id].setPosition(data[id].x, data[id].y);
+                if (!otherPlayers[id]) {
+                    const r = self.add.rectangle(0, 0, 40, 40, p.color);
+                    const n = self.add.text(0, -35, p.name, { fontSize: '14px', fontFamily: 'Arial Black', fill: '#ffffff', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
+                    otherPlayers[id] = self.add.container(p.x, p.y, [r, n]);
+                } else {
+                    otherPlayers[id].setPosition(p.x, p.y);
+                }
             });
 
-            if (leaderId === myId) {
-                leaderText.setText('⭐ VAS LIDERANDO ⭐').setFill('#00ff00');
-            } else if (leaderId !== "") {
-                leaderText.setText(`LÍDER: ${leaderId.toUpperCase()} (${maxScore})`).setFill('#ff5555');
+            if (leaderName !== "") {
+                const prefix = 'LIDER: '//(leaderName === myName) ? "⭐ VAS " : "LÍDER: ";
+                leaderText.setText(`${prefix}${leaderName} (${maxScore})`).setFill('#00ffcc');
+            } else {
+                leaderText.setText('BUSCANDO LÍDER...').setFill('#ffffff');
             }
+            
             Object.keys(otherPlayers).forEach(id => { if(!data[id]) { otherPlayers[id].destroy(); delete otherPlayers[id]; } });
         });
 
-        // --- MOVIMIENTO ---
         this.input.on('pointermove', (ptr) => {
             if (ptr.isDown && !isStunned && !hasWon) {
-                player.setPosition(ptr.x, ptr.y);
-                playerRef.update({ x: player.x, y: player.y });
+                playerContainer.setPosition(ptr.x, ptr.y);
+                playerRef.update({ x: playerContainer.x, y: playerContainer.y });
             }
         });
     }
