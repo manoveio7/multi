@@ -38,8 +38,9 @@
     const LERP_END = 0.005;  // Velocidad final (pesado)
     
     var cam;
+    var choque,comida;
     
-    const obstacleRadius = 50; 
+    const obstacleRadius = 30; 
     var obstaclePositions = [{ x: 0.25, y: 0.25 }, { x: 0.75, y: 0.30 }, { x: 0.50, y: 0.80 }];
 
     // --- VARIABLES DE CONTROL ---
@@ -58,15 +59,24 @@
 		orientation: 'portrait-primary'//'landscape'
 	},
         physics: { default: 'arcade', arcade: { debug: false } },
-        scene: { create: create, update: update }
+        scene: {preload: carga, create: create, update: update }
     };
 
     const game = new Phaser.Game(config);
 
+    function carga(){
+       this.load.audio('choque', 'choque.mp3'); 
+       this.load.audio('comida', 'comida.mp3'); 
+    }
+    
     function create() {
         cam = this.cameras.main;
         targetPos = {x: cam.width/2, y: cam.height/2};
-        //obstaclePositions = [{x: 50, y:100},{x:200,y:300},{x:80,y:500}]
+      
+       // definir los audios del juego
+        choque = this.sound.add('choque').setVolume(0.6);
+        comida = this.sound.add('comida').setVolume(0.3);
+      
         const self = this;
         const centerX = window.innerWidth / 2;
         const centerY = window.innerHeight / 2;
@@ -116,6 +126,8 @@
             p.y += Math.sin(angle) * 80;
             targetPos.x = p.x; targetPos.y = p.y; // Resetea el destino al lugar del rebote
             
+            choque.play()
+           
             this.tweens.add({
                 targets: p,
                 alpha: 0.2,
@@ -161,6 +173,7 @@
         this.physics.add.overlap(playerContainer, foodGroup, (p, f) => {
             if (hasWon) return;
             db.ref(`food/${f.foodId}`).remove();
+            comida.play()
             score++;
             scoreText.setText(`PUNTOS: ${score}`);
             if (score >= WIN_SCORE) showEndPanel(true, myName);
