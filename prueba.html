@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <title>Square Battle: Smooth Edition</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-database-compat.js"></script>
+    <style>
+        body { margin: 0; background: #1a1a1a; overflow: hidden; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <script>
+        // --- CONFIGURACIÓN FIREBASE ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyBH492P6Zzt sHuMW8USDj-AwXjh2cYzwV4",
+            authDomain: "phasermultiplayer.firebaseapp.com",
+            databaseURL: "https://phasermultiplayer-default-rtdb.firebaseio.com",
+            projectId: "phasermultiplayer",
+            storageBucket: "phasermultiplayer.firebasestorage.app",
+            messagingSenderId: "1039473102775",
+            appId: "1:1039473102775:web:46391f6a4192f65561a232"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        let myName = prompt("Ingresa tu nombre:", "JUGADOR"+Phaser.Math.Between(0, 100) || "INVITADO");
+        myName = myName.substring(0, 10).toUpperCase();
+
+        const myId = Math.random().toString(36).substring(7);
+        const WIN_SCORE = 50;
+        const LERP_START = 0.05; 
+        const LERP_END = 0.005; 
+
+        var cam, choque, comida, activaAudioText;
+        var activarAudio = 0;
+
+        const obstacleRadius = 30;
+        var obstaclePositions = [{x: 0.25, y: 0.25}, {x: 0.75, y: 0.30}, {x: 0.50, y: 0.80}];
+
+        let playerContainer, foodGroup, obstacles, isStunned = false, score = 0, otherPlayers = {};
+        let scoreText, statusText, leaderText, hasWon = false, targetPos;
+
+        const config = {
+            type: Phaser.AUTO,
+            width: 400,
+            height: 780,
+            scale: { mode: Phaser.Scale.FIT, autoCenter: true, orientation: 'portrait-primary' },
+            physics: { default: 'arcade', arcade: { debug: false } },
+            scene: { preload: carga, create: create, update: update }
+        };
+
+        const game = new Phaser.Game(config);
+
+        function carga() {
+            this.load.audio('choque', 'choque.mp3');
+            this.load.audio('comida', 'comida.mp3');
+        }
+
+        function create() {
+            cam = this.cameras.main;
+            targetPos = { x: cam.width/2, y: cam.height/2 };
+
+            choque = this.sound.add('choque').setVolume(0.6);
+            comida = this.sound.add('comida').setVolume(0.3);
+
+            const self = this;
+            const centerX = cam.width / 2;
+
+            foodGroup = this.physics.add.group();
+            obstacles = this.physics.add.staticGroup();
+
+            const baseStyle = { fontFamily: 'Arial Black', fill: '#ffffff', align: 'center', stroke: '#ffffff', strokeThickness: 6 };
+
+            activaAudioText = this.add.text(centerX, cam.height/2, `TOCA PARA ACTIVAR SONIDO`, {
+                ...baseStyle, fontSize: '20px', fill: '#00ffcc', strokeThickness: 1
+            }).setOrigin(0.5).setDepth(20);
+
+            scoreText = this.add.text(centerX, 15, 'PUNTOS: 0', { ...baseStyle, fontSize: '32px', fill: '#000000', strokeThickness: 2 }).setOrigin(0.5).setDepth(20);
+            leaderText = this.add.text(centerX, 40, 'ESPERANDO JUGADORES...', { ...baseStyle, fontSize: '20px', fill: '#00ffcc', strokeThickness: 0 }).setOrigin(0.5).setDepth(20);
+            statusText = this.add.text(centerX, 70, `Gana quien llega a ${WIN_SCORE} puntos`, { ...baseStyle, fontSize: '12px', fill: '#ffcc00', strokeThickness: 0 }).setOrigin(0.5).setDepth(20);
+
+            obstaclePositions.forEach(pos => {
+                const circle = this.add.circle(cam.width * pos.x, cam.height * pos.y, obstacleRadius, 0xff0000);
+                obstacles.add(circle);
+                circle.body.setCircle(obstacleRadius);
+                circle.body.updateFromGameObject();
+                pos.realX = circle.x; pos.realY = circle.y;
+            });
+
+            const playerColor = Math.random() * 0xffffff;
+            const playerRect = this.add.rectangle(0, 0, 40, 40, playerColor);
+            const nameTag = this.add.text(0, -35, myName, { fontSize: '14px', fontFamily: 'Arial Black', fill: '#ffffff', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
+
+            playerContainer = this.add.container(centerX, cam.height/2, [playerRect, nameTag]);
+            playerContainer.setSize(40, 40);
+            this.physics.add.existing(playerContainer);
+
+            const playerRef = db.ref(`players/${myId}`);
+            playerRef.set({ x: playerContainer.x, y: playerContainer.y, id: myId, name: myName, color: playerColor, score: 0 });
+            playerRef.onDisconnect().remove();
+
+            this.physics.add.collider(playerContainer, obstacles, (p, obs) => {
+                if (isStunned || hasWon) return;
+                isStunned = true;
+                const angle = Phaser.Math.Angle.Between(obs.x, obs.y, p.x, p.y);
+                p.x += Math.cos(angle) * 80; p.y += Math.sin(angle) * 80;
+                targetPos.x = p.x; targetPos.y = p.y;
+                if(activarAudio > 0) choque.play();
+                this.tweens.add({ targets: p, alpha: 0.2, duration: 80, yoyo: true, repeat: 7, onComplete: () => { p.alpha = 1; isStunned = false; } });
+            });
+
+            // --- LÓGICA DE COMIDA OPTIMIZADA (SÓLO 1 Y CON DELAY) ---
+            const replenishFood = () => {
+                db.ref('food').once('value', (snap) => {
+                    // Solo creamos si no hay ninguna comida en la base de datos
+                    if (snap.numChildren() < 1) {
+                        let fx, fy, safe, attempts = 0;
+                        do {
+                            fx = Phaser.Math.Between(50, cam.width - 50);
+                            fy = Phaser.Math.Between(50, cam.height - 50);
+                            safe = true;
+                            attempts++;
+                            obstaclePositions.forEach(obs => {
+                                if (Phaser.Math.Distance.Between(fx, fy, obs.realX, obs.realY) < (obstacleRadius + 40)) safe = false;
+                            });
+                        } while (!safe && attempts < 15);
+                        if (safe) db.ref('food').push({ x: fx, y: fy });
+                    }
+                });
+            };
+
+            // Reparador automático preventivo (cada 5 seg) por si falla la conexión
+            this.time.addEvent({ delay: 5000, callback: replenishFood, loop: true });
+
+            db.ref('food').on('child_added', (snap) => {
+                const f = snap.val();
+                const dot = self.add.circle(f.x, f.y, 10, 0xffff00);
+                dot.foodId = snap.key;
+                foodGroup.add(dot);
+                this.physics.add.existing(dot);
+                
+                // Efecto visual: la comida aparece creciendo
+                dot.setScale(0);
+                this.tweens.add({ targets: dot, scale: 1, duration: 300, ease: 'Back.out' });
+            });
+
+            db.ref('food').on('child_removed', (snap) => {
+                foodGroup.getChildren().forEach(c => { if (c.foodId === snap.key) c.destroy(); });
+                // RESTRICCIÓN: Espera 1.5 segundos antes de intentar generar la siguiente
+                this.time.delayedCall(1500, replenishFood);
+            });
+
+            this.physics.add.overlap(playerContainer, foodGroup, (p, f) => {
+                if (hasWon) return;
+                db.ref(`food/${f.foodId}`).remove();
+                if(activarAudio > 0) comida.play();
+                score++;
+                scoreText.setText(`PUNTOS: ${score}`);
+                if (score >= WIN_SCORE) showEndPanel(true, myName);
+                playerRef.update({ score: score });
+            });
+
+            db.ref('players').on('value', (snap) => {
+                const data = snap.val() || {};
+                let maxScore = -1, leaderName = "";
+                Object.keys(data).forEach(id => {
+                    const p = data[id];
+                    if (p.score > maxScore) { maxScore = p.score; leaderName = p.name; }
+                    if (p.score >= WIN_SCORE && id !== myId && !hasWon) showEndPanel(false, p.name);
+                    if (id === myId) return;
+                    if (!otherPlayers[id]) {
+                        const r = self.add.rectangle(0, 0, 40, 40, p.color);
+                        const n = self.add.text(0, -35, p.name, { fontSize: '14px', fontFamily: 'Arial Black', fill: '#ffffff', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
+                        otherPlayers[id] = self.add.container(p.x, p.y, [r, n]);
+                    } else {
+                        otherPlayers[id].x = Phaser.Math.Linear(otherPlayers[id].x, p.x, 0.2);
+                        otherPlayers[id].y = Phaser.Math.Linear(otherPlayers[id].y, p.y, 0.2);
+                    }
+                });
+                if (leaderName) leaderText.setText(`LÍDER: ${leaderName} (${maxScore})`);
+                Object.keys(otherPlayers).forEach(id => { if (!data[id]) { otherPlayers[id].destroy(); delete otherPlayers[id]; } });
+            });
+
+            this.input.on('pointermove', (ptr) => { if (ptr.isDown) { targetPos.x = ptr.x; targetPos.y = ptr.y; } });
+
+            this.input.on('pointerdown', (pointer) => {
+                if (activarAudio < 1) {
+                    if (this.sound.context.state === 'suspended') this.sound.context.resume();
+                    activarAudio++;
+                    activaAudioText.setText("¡AUDIO ACTIVADO!");
+                    this.time.delayedCall(1500, () => activaAudioText.setVisible(false));
+                }
+                if (!this.scale.isFullscreen) this.scale.startFullscreen();
+                targetPos.x = pointer.x; targetPos.y = pointer.y;
+            });
+
+            const showEndPanel = (isWinner, winnerName) => {
+                if (hasWon) return;
+                hasWon = true;
+                self.add.rectangle(centerX, cam.height/2, cam.width, cam.height, 0x000000, 0.8).setDepth(1000);
+                self.add.text(centerX, cam.height/2 - 50, isWinner ? "¡VICTORIA!": "¡HAS PERDIDO!", { ...baseStyle, fontSize: '40px', fill: isWinner ? "#0000ff": "#ff3333" }).setOrigin(0.5).setDepth(1001);
+                const btn = self.add.rectangle(centerX, cam.height/2 + 100, 200, 50, 0xffffff).setDepth(1001).setInteractive({ useHandCursor: true });
+                self.add.text(centerX, cam.height/2 + 100, "REINICIAR", { fontFamily: 'Arial Black', fontSize: '20px', fill: '#000000' }).setOrigin(0.5).setDepth(1002);
+                btn.on('pointerdown', () => { 
+                    db.ref('food').remove(); 
+                    db.ref(`players/${myId}`).update({score: 0});
+                    location.reload(); 
+                });
+            };
+        }
+
+        function update() {
+            if (isStunned || hasWon || !playerContainer) return;
+            const progress = Math.min(score / WIN_SCORE, 1);
+            const currentLerp = LERP_START - (progress * (LERP_START - LERP_END));
+            playerContainer.x = Phaser.Math.Linear(playerContainer.x, targetPos.x, currentLerp);
+            playerContainer.y = Phaser.Math.Linear(playerContainer.y, targetPos.y, currentLerp);
+            db.ref(`players/${myId}`).update({ x: playerContainer.x, y: playerContainer.y });
+        }
+    </script>
+</body>
+</html>
