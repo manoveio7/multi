@@ -308,7 +308,7 @@
                     hasWon = true;
                     self.add.rectangle(centerX, centerY, window.innerWidth, window.innerHeight, 0x000000, 0.8).setDepth(1000);
                     self.add.text(centerX, centerY - 50, isWinner ? "¡VICTORIA!": "¡HAS PERDIDO!", {
-                        ...baseStyle, fontSize: '64px', fill: isWinner ? "#00ff00": "#ff3333", strokeThickness: 0
+                        ...baseStyle, fontSize: '54px', fill: isWinner ? "#00ff00": "#ff3333", strokeThickness: 0
                     }).setOrigin(0.5).setDepth(1001);
                     self.add.text(centerX, centerY + 20, `GANADOR: ${winnerName}`, {
                         ...baseStyle, fontSize: '24px', fill: '#ffcc00', strokeThickness: 0
