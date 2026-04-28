@@ -209,7 +209,7 @@
                 if (hasWon) return;
                 hasWon = true;
                 self.add.rectangle(centerX, cam.height/2, cam.width, cam.height, 0x000000, 0.8).setDepth(1000);
-                self.add.text(centerX, cam.height/2 - 50, isWinner ? "¡VICTORIA!": "¡HAS PERDIDO!", { ...baseStyle, fontSize: '50px', fill: isWinner ? "#00ff00": "#ff3333" }).setOrigin(0.5).setDepth(1001);
+                self.add.text(centerX, cam.height/2 - 50, isWinner ? "¡VICTORIA!": "¡HAS PERDIDO!", { ...baseStyle, fontSize: '40px', fill: isWinner ? "#0000ff": "#ff3333" }).setOrigin(0.5).setDepth(1001);
                 const btn = self.add.rectangle(centerX, cam.height/2 + 100, 200, 50, 0xffffff).setDepth(1001).setInteractive({ useHandCursor: true });
                 self.add.text(centerX, cam.height/2 + 100, "REINICIAR", { fontFamily: 'Arial Black', fontSize: '20px', fill: '#000000' }).setOrigin(0.5).setDepth(1002);
                 btn.on('pointerdown', () => { 
