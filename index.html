@@ -114,10 +114,11 @@
                 this.tweens.add({ targets: p, alpha: 0.2, duration: 80, yoyo: true, repeat: 7, onComplete: () => { p.alpha = 1; isStunned = false; } });
             });
 
-            // --- LÓGICA DE COMIDA CORREGIDA ---
+            // --- LÓGICA DE COMIDA OPTIMIZADA (SÓLO 1 Y CON DELAY) ---
             const replenishFood = () => {
                 db.ref('food').once('value', (snap) => {
-                    if (snap.numChildren() < 2) {
+                    // Solo creamos si no hay ninguna comida en la base de datos
+                    if (snap.numChildren() < 1) {
                         let fx, fy, safe, attempts = 0;
                         do {
                             fx = Phaser.Math.Between(50, cam.width - 50);
@@ -132,21 +133,9 @@
                     }
                 });
             };
-            // Reparador automático cada 3 segundos
-            this.time.addEvent({ delay: 3000, callback: replenishFood, loop: true });
 
-
-            // REPARADOR AUTOMÁTICO (Cada 3 seg)
-        /*    this.time.addEvent({
-                delay: 3000,
-                callback: () => {
-                    db.ref('food').once('value', snap => {
-                        if (snap.numChildren() < 1) replenishFood();
-                    });
-                },
-                loop: true
-            });
-        */
+            // Reparador automático preventivo (cada 5 seg) por si falla la conexión
+            this.time.addEvent({ delay: 5000, callback: replenishFood, loop: true });
 
             db.ref('food').on('child_added', (snap) => {
                 const f = snap.val();
@@ -154,11 +143,16 @@
                 dot.foodId = snap.key;
                 foodGroup.add(dot);
                 this.physics.add.existing(dot);
+                
+                // Efecto visual: la comida aparece creciendo
+                dot.setScale(0);
+                this.tweens.add({ targets: dot, scale: 1, duration: 300, ease: 'Back.out' });
             });
 
             db.ref('food').on('child_removed', (snap) => {
                 foodGroup.getChildren().forEach(c => { if (c.foodId === snap.key) c.destroy(); });
-                replenishFood();
+                // RESTRICCIÓN: Espera 1.5 segundos antes de intentar generar la siguiente
+                this.time.delayedCall(1500, replenishFood);
             });
 
             this.physics.add.overlap(playerContainer, foodGroup, (p, f) => {
