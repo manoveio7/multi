@@ -117,7 +117,7 @@
             // --- LÓGICA DE COMIDA CORREGIDA ---
             const replenishFood = () => {
                 db.ref('food').once('value', (snap) => {
-                    if (snap.numChildren() < 3) {
+                    if (snap.numChildren() < 2) {
                         let fx, fy, safe, attempts = 0;
                         do {
                             fx = Phaser.Math.Between(50, cam.width - 50);
@@ -137,7 +137,7 @@
 
 
             // REPARADOR AUTOMÁTICO (Cada 3 seg)
-            this.time.addEvent({
+        /*    this.time.addEvent({
                 delay: 3000,
                 callback: () => {
                     db.ref('food').once('value', snap => {
@@ -146,6 +146,7 @@
                 },
                 loop: true
             });
+        */
 
             db.ref('food').on('child_added', (snap) => {
                 const f = snap.val();
