@@ -132,6 +132,9 @@
                     }
                 });
             };
+            // Reparador automático cada 3 segundos
+            this.time.addEvent({ delay: 3000, callback: replenishFood, loop: true });
+
 
             // REPARADOR AUTOMÁTICO (Cada 3 seg)
             this.time.addEvent({
