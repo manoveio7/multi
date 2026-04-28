@@ -323,6 +323,21 @@
                         db.ref().remove(); location.reload();
                     });
                 };
+                // --- AUTO-REPARADOR DE COMIDA ---
+// Cada 5 segundos revisa si hay menos de 3 comidas. Si es así, crea más.
+this.time.addEvent({
+    delay: 5000,
+    callback: () => {
+        db.ref('food').once('value', (snap) => {
+            if (snap.numChildren() < 3) {
+                console.log("Reponiendo comida automáticamente...");
+                replenishFood();
+            }
+        });
+    },
+    loop: true
+});
+
             }
 
             function update() {
