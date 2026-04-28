@@ -79,7 +79,7 @@
             overlayInicio = this.add.rectangle(centerX, cam.height/2, cam.width, cam.height, 0x000000, 0.7).setDepth(100);
             instruccionText = this.add.text(centerX, cam.height/2, 
                 `¡BIENVENIDO ${myName}!\n\nREGLAS:\n1. Atrapa puntos amarillos\n2. Esquiva los círculos rojos\n3. Llega a ${WIN_SCORE} para ganar\n\n[ TOCA PARA EMPEZAR ]`, {
-                fontFamily: 'Arial Black', fontSize: '18px', fill: '#00ffcc', align: 'center', stroke: '#ffffff', strokeThickness: 1
+                fontFamily: 'Arial Black', fontSize: '18px', fill: '#00ffcc', align: 'center', stroke: '#ffffff', strokeThickness: 0
             }).setOrigin(0.5).setDepth(101);
 
             scoreText = this.add.text(centerX, 25, 'PUNTOS: 0', { fontFamily: 'Arial Black', fontSize: '32px', fill: '#ffffff', stroke: '#000000', strokeThickness: 4 }).setOrigin(0.5).setDepth(20);
