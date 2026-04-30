@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <title>Square Battle: Original con Partículas</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60/dist/phaser.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-database-compat.js"></script>
+    <style>
+        body {
+            margin: 0;
+            background: #1a1a1a;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyBH492P6Zzt sHuMW8USDj-AwXjh2cYzwV4",
+            authDomain: "phasermultiplayer.firebaseapp.com",
+            databaseURL: "https://phasermultiplayer-default-rtdb.firebaseio.com",
+            projectId: "phasermultiplayer",
+            storageBucket: "phasermultiplayer.firebasestorage.app",
+            messagingSenderId: "1039473102775",
+            appId: "1:1039473102775:web:46391f6a4192f65561a232"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        let myName = prompt("Ingresa tu nombre:", "JUGADOR" + Phaser.Math.Between(0, 100) || "INVITADO");
+        myName = myName.substring(0, 10).toUpperCase();
+
+        const myId = Math.random().toString(36).substring(7);
+        const WIN_SCORE = 5;
+        const LERP_START = 0.05;
+        const LERP_END = 0.005;
+
+        var cam, choque, comida, instruccionText, overlayInicio, emitter, trailParticles;
+        var juegoIniciado = false;
+
+        const obstacleRadius = 30;
+        var obstaclePositions = [{
+            x: 0.25,
+            y: 0.25
+        }, {
+            x: 0.75,
+            y: 0.30
+        }, {
+            x: 0.50,
+            y: 0.80
+        }];
+
+        let playerContainer, foodGroup, obstacles, isStunned = false, score = 0, otherPlayers = {};
+        let scoreText, statusText, leaderText, hasWon = false, targetPos;
+
+        const config = {
+            type: Phaser.AUTO,
+            width: 400,
+            height: 780,
+            scale: {
+                mode: Phaser.Scale.FIT,
+                autoCenter: true,
+                orientation: 'portrait-primary'
+            },
+            physics: {
+                default: 'arcade',
+                arcade: {
+                    debug: false
+                }
+            },
+            scene: {
+                preload: carga,
+                create: create,
+                update: update
+            }
+        };
+
+        const game = new Phaser.Game(config);
+
+        function carga() {
+            this.load.audio('choque', 'choque.mp3');
+            this.load.audio('comida', 'comida.mp3');
+            this.load.image('nave','nave.png')
+        }
+
+        function create() {
+            cam = this.cameras.main;
+            targetPos = {
+                x: cam.width / 2,
+                y: cam.height / 2
+            };
+            choque = this.sound.add('choque').setVolume(0.6);
+            comida = this.sound.add('comida').setVolume(0.3);
+            const self = this;
+            const centerX = cam.width / 2;
+
+            foodGroup = this.physics.add.group();
+            obstacles = this.physics.add.staticGroup();
+
+            const graphics = this.make.graphics({
+                x: 0, y: 0, add: false
+            });
+            graphics.fillStyle(0xffffff, 1);
+            graphics.fillRect(0, 0, 8, 8);
+            graphics.generateTexture('trailPixel', 8, 8);
+
+            overlayInicio = this.add.rectangle(centerX, cam.height / 2, cam.width, cam.height, 0x000000, 0.7).setDepth(100);
+            instruccionText = this.add.text(centerX, cam.height / 2,
+                `¡BIENVENIDO ${myName}!\n\nREGLAS:\n1. Atrapa puntos amarillos\n2. Esquiva los círculos rojos\n3. Llega a ${WIN_SCORE} para ganar\n\n[ TOCA PARA EMPEZAR ]`, {
+                fontFamily: 'Arial Black', fontSize: '18px', fill: '#ffffff', align: 'center', stroke: '#ffffff', strokeThickness: 0
+            }).setOrigin(0.5).setDepth(101);
+
+            scoreText = this.add.text(centerX, 25, 'PUNTOS: 0', {
+                fontFamily: 'Arial Black', fontSize: '32px', fill: '#ffffff', stroke: '#000000', strokeThickness: 4
+            }).setOrigin(0.5).setDepth(20);
+            leaderText = this.add.text(centerX, 57, 'ESPERANDO JUGADORES...', {
+                fontFamily: 'Arial Black', fontSize: '18px', fill: '#00ffcc'
+            }).setOrigin(0.5).setDepth(20);
+            statusText = this.add.text(centerX, 80, `Meta: ${WIN_SCORE} puntos`, {
+                fontFamily: 'Arial Black', fontSize: '12px', fill: '#ffcc00'
+            }).setOrigin(0.5).setDepth(20);
+
+            
+            obstaclePositions.forEach(pos => {
+                const circle = this.add.circle(cam.width * pos.x, cam.height * pos.y, obstacleRadius, 0xff0000);
+                obstacles.add(circle);
+                circle.body.setCircle(obstacleRadius);
+                circle.body.updateFromGameObject();
+                pos.realX = circle.x; pos.realY = circle.y;
+                circle.postFX.addGlow(0xffB900, 2, 0);
+            });
+            
+            //****************************************
+            let nave = this.add.image(0,0,'nave')
+            .setDisplaySize(40,40)
+            
+            const playerColor = Math.random() * 0xffffff;
+            nave.setTint(playerColor)
+            const playerRect = this.add.rectangle(0, 0, 40, 40, playerColor);
+            const nameTag = this.add.text(0, -35, myName, {
+                fontSize: '14px', fontFamily: 'Arial Black', fill: '#ffffff', stroke: '#000', strokeThickness: 3
+            }).setOrigin(0.5);
+
+            playerContainer = this.add.container(centerX, cam.height / 2, [nave,nameTag]);//[playerRect, nameTag]);
+            playerContainer.setSize(40, 40).setDepth(10);
+            this.physics.add.existing(playerContainer);
+
+            // Estela del jugador (Phaser 3.60)
+            trailParticles = this.add.particles(0, 0, 'trailPixel', {
+                speed: 0, lifespan: 400, alpha: {
+                    start: 0.5, end: 0
+                },
+                scale: {
+                    start: 2, end: 0
+                }, frequency: 20, blendMode: 'ADD',
+                tint: playerColor, follow: playerContainer, emitting: false
+            }).setDepth(5);
+
+            const playerRef = db.ref(`players/${myId}`);
+            playerRef.set({
+                x: playerContainer.x, y: playerContainer.y, id: myId, name: myName, color: playerColor, score: 0
+            });
+            playerRef.onDisconnect().remove();
+
+            // Función para reponer comida (Siempre 1 sola)
+            const replenishFood = () => {
+                if (hasWon) return;
+                db.ref('food').once('value', (snap) => {
+                    if (snap.numChildren() === 0) {
+                        let fx,
+                            fy,
+                            safe,
+                            attempts = 0;
+                        do {
+                            fx = Phaser.Math.Between(50, cam.width - 50);
+                            fy = Phaser.Math.Between(50, cam.height - 50);
+                            safe = true; attempts++;
+                            obstaclePositions.forEach(obs => {
+                                if (Phaser.Math.Distance.Between(fx, fy, obs.realX, obs.realY) < (obstacleRadius + 40)) safe = false;
+                            });
+                        } while (!safe && attempts < 15);
+                        if (safe) db.ref('food').push({
+                            x: fx, y: fy
+                        });
+                    }
+                });
+            };
+            this.time.addEvent({
+                delay: 3000,
+                callback: replenishFood,
+                loop: true
+            });
+
+            db.ref('food').on('child_added',
+                (snap) => {
+                    const f = snap.val();
+                    const dot = self.add.circle(f.x, f.y, 10, 0xffff00);
+                    dot.foodId = snap.key;
+                    foodGroup.add(dot);
+                    this.physics.add.existing(dot);
+                    dot.setScale(0);
+                    this.tweens.add({
+                        targets: dot, scale: 1, duration: 300, ease: 'Back.out'
+                    });
+                });
+
+            db.ref('food').on('child_removed',
+                (snap) => {
+                    foodGroup.getChildren().forEach(c => {
+                        if (c.foodId === snap.key) c.destroy();
+                    });
+                });
+
+            // Lógica de colisión con rebote original
+            this.physics.add.collider(playerContainer, obstacles, (p,
+                obs) => {
+                if (isStunned || hasWon || !juegoIniciado) return;
+                isStunned = true;
+                const angle = Phaser.Math.Angle.Between(obs.x, obs.y, p.x, p.y);
+                p.x += Math.cos(angle) * 80; p.y += Math.sin(angle) * 80;
+                targetPos.x = p.x; targetPos.y = p.y;
+                choque.play();
+                this.tweens.add({
+                    targets: p, alpha: 0.2, duration: 80, yoyo: true, repeat: 7, onComplete: () => {
+                        p.alpha = 1; isStunned = false;
+                    }
+                });
+            });
+
+            this.physics.add.overlap(playerContainer,
+                foodGroup,
+                (p, f) => {
+                    if (hasWon || !juegoIniciado) return;
+                    db.ref(`food/${f.foodId}`).remove();
+                    comida.play();
+                    score++;
+                    scoreText.setText(`PUNTOS: ${score}`);
+                    playerRef.update({
+                        score: score
+                    });
+                    if (score >= WIN_SCORE) {
+                        db.ref('gameState').set({
+                            winnerFound: true, winnerId: myId, winnerName: myName
+                        });
+                    }
+                });
+
+            // Sincronización del Ganador
+            db.ref('gameState').on('value',
+                (snap) => {
+                    const state = snap.val();
+                    if (state && state.winnerFound && !hasWon) {
+                        showEndPanel(state.winnerId === myId, state.winnerName);
+                    }
+                });
+
+                // Movimiento, Color y Rotación de otros jugadores
+db.ref('players').on('value', (snap) => {
+    const data = snap.val() || {};
+    let maxS = -1, leaderN = "";
+
+    Object.keys(data).forEach(id => {
+        const p = data[id];
+        if (p.score > maxS) {
+            maxS = p.score; leaderN = p.name;
+        }
+
+        if (id === myId) return;
+
+        if (!otherPlayers[id]) {
+            // --- CREACIÓN DE NUEVO JUGADOR ---
+            let na = self.add.image(0, 0, 'nave').setDisplaySize(40, 40);
+            
+            // CORRECCIÓN 1: Aplicar el color guardado en Firebase a la nave remota
+            na.setTint(p.color); 
+
+            const n = self.add.text(0, -35, p.name, {
+                fontSize: '14px', fontFamily: 'Arial Black', fill: '#ffffff', stroke: '#000', strokeThickness: 3
+            }).setOrigin(0.5);
+            
+            const container = self.add.container(p.x, p.y, [na, n]).setDepth(9);
+
+            const particles = self.add.particles(0, 0, 'trailPixel', {
+                speed: 0, 
+                lifespan: 400, 
+                alpha: { start: 0.5, end: 0 },
+                scale: { start: 2, end: 0 }, 
+                frequency: 20, 
+                blendMode: 'ADD',
+                tint: p.color, 
+                follow: container, 
+                emitting: true
+            }).setDepth(5);
+
+            otherPlayers[id] = {
+                container: container,
+                particles: particles
+            };
+
+        } else {
+            // --- ACTUALIZACIÓN DE JUGADOR EXISTENTE ---
+            const target = otherPlayers[id];
+            
+            target.container.x = Phaser.Math.Linear(target.container.x, p.x, 0.2);
+            target.container.y = Phaser.Math.Linear(target.container.y, p.y, 0.2);
+
+            // CORRECCIÓN 2: Aplicar la rotación que viene de Firebase
+            if (p.rotation !== undefined) {
+                target.container.rotation = p.rotation;
+            }
+
+            const dist = Phaser.Math.Distance.Between(target.container.x, target.container.y, p.x, p.y);
+            target.particles.emitting = (dist > 0.1);
+        }
+    });
+
+    if (leaderN) leaderText.setText(`LÍDER: ${leaderN} (${maxS})`);
+
+     // --- LIMPIEZA DE JUGADORES DESCONECTADOS ---
+    Object.keys(otherPlayers).forEach(id => {
+        if (!data[id]) {
+            otherPlayers[id].particles.destroy(); // ¡Importante destruir las partículas también!
+            otherPlayers[id].container.destroy(); 
+            delete otherPlayers[id];
+        }
+    });
+    
+    // ... (resto del código de limpieza de jugadores)
+});
+            this.input.on('pointerdown', (pointer) => {
+                // Si el juego aún no ha empezado, activamos pantalla completa y música
+                if (!juegoIniciado) {
+
+                    if (this.sound.context.state === 'suspended') {
+                        this.sound.context.resume();
+                    }
+
+                    juegoIniciado = true;
+                    this.tweens.add({
+                        targets: [instruccionText, overlayInicio],
+                        alpha: 0,
+                        duration: 500
+                    });
+                }
+                // --- CÓDIGO DE PANTALLA COMPLETA ---
+                // Se ejecuta solo una vez al iniciar para cumplir con las reglas del navegador
+                if (!this.scale.isFullscreen) {
+                    this.scale.startFullscreen();
+                }
+                // -----------------------------------
+
+
+                // El resto del código para mover el cuadrado sigue funcionando normal
+                targetPos.x = pointer.x;
+                targetPos.y = pointer.y;
+            });
+
+
+            this.input.on('pointermove',
+                (ptr) => {
+                    if (ptr.isDown && juegoIniciado) {
+                        targetPos.x = ptr.x; targetPos.y = ptr.y;
+                    }
+                });
+
+            // PANEL FINAL CON LLUVIA DE PARTÍCULAS
+            const showEndPanel = (isWinner,
+                winnerName) => {
+                hasWon = true;
+                trailParticles.emitting = false;
+
+                // Fondo oscuro
+                self.add.rectangle(centerX,
+                    cam.height / 2,
+                    cam.width,
+                    cam.height,
+                    0x000000,
+                    0.7).setDepth(800);
+
+                // LLUVIA DE CUADRADOS (v3.60)
+                const rain = self.add.particles(0,
+                    0,
+                    'trailPixel',
+                    {
+                        x: {
+                            min: 0,
+                            max: cam.width
+                        },
+                        y: -20,
+                        lifespan: 3000,
+                        speedY: {
+                            min: 200,
+                            max: 400
+                        },
+                        scale: {
+                            min: 1,
+                            max: 6
+                        },
+                        rotate: {
+                            start: 0,
+                            end: 360
+                        },
+                        tint: () => Phaser.Display.Color.RandomRGB().color,
+                        quantity: 2,
+                        frequency: 100
+                    }).setDepth(900);
+
+                // Panel
+                const panelGroup = self.add.container(centerX,
+                    cam.height / 2).setDepth(1001).setScale(0);
+                let bg = self.add.rectangle(0,
+                    0,
+                    320,
+                    400,
+                    0x000000,
+                    0.9).setStrokeStyle(4,
+                        isWinner ? 0x00ffcc : 0xff3333);
+
+                // Efecto de resplandor al cartel de final del juego
+                bg.postFX.addGlow(0xffffff, 2, 0);
+
+                const title = self.add.text(0,
+                    -120,
+                    isWinner ? "¡VICTORIA!" : "FIN DEL JUEGO",
+                    {
+                        fontFamily: 'Arial Black',
+                        fontSize: '35px',
+                        fill: isWinner ? '#00ffcc' : '#ff3333',
+                        stroke: '#000',
+                        strokeThickness: 6
+                    }).setOrigin(0.5);
+
+                let winnerLabel = self.add.text(0,
+                    -40,
+                    isWinner ? "¡Has ganado el juego!" : `Ganador: ${winnerName}`,
+                    {
+                        fontFamily: 'Arial Black',
+                        fontSize: '16px',
+                        fill: '#ffffff'
+                    }).setOrigin(0.5);
+                // Animar texto que muestra el Ganador
+                winnerLabel.anim = this.tweens.add({
+                    targets: winnerLabel, // El objeto a animar
+                    scaleX: 1.2,          // Escala final en X (un 20% más grande)
+                    scaleY: 1.2,          // Escala final en Y
+                    duration: 500,        // Duración de una fase (crecer) en milisegundos (0.5 seg)
+                    ease: 'Sine.easeInOut', // Tipo de suavizado para una animación natural
+                    yoyo: true,           // Cuando termina de crecer, vuelve a su estado original (encogerse)
+                    repeat: -1           // Repetir infinitamente (-1)
+                });
+
+                const scoreLabel = self.add.text(0,
+                    20,
+                    `Puntos finales: ${score}`,
+                    {
+                        fontFamily: 'Arial Black',
+                        fontSize: '22px',
+                        fill: '#ffcc00'
+                    }).setOrigin(0.5);
+
+                const btnBg = self.add.rectangle(0,
+                    120,
+                    200,
+                    60,
+                    0xffffff).setInteractive({
+                        useHandCursor: true
+                    });
+                const btnText = self.add.text(0,
+                    120,
+                    "REINICIAR",
+                    {
+                        fontFamily: 'Arial Black',
+                        fontSize: '24px',
+                        fill: '#000000'
+                    }).setOrigin(0.5);
+
+                panelGroup.add([bg,
+                    title,
+                    winnerLabel,
+                    scoreLabel,
+                    btnBg,
+                    btnText]);
+                self.tweens.add({
+                    targets: panelGroup,
+                    scale: 1,
+                    duration: 500,
+                    ease: 'Back.out'
+                });
+                self.tweens.add({
+                    targets: btnBg,
+                    scale: 1.05,
+                    duration: 800,
+                    yoyo: true,
+                    repeat: -1
+                });
+
+                btnBg.on('pointerdown', () => {
+                    // 1. Detenemos la animación del texto como ya habías planeado
+                    if (winnerLabel.anim) {
+                        winnerLabel.anim.stop();
+                    }
+
+                    // 2. Limpiamos Firebase de forma segura antes de recargar
+                    // Usamos 'set(null)' que es más drástico que remove en algunos contextos
+                    // Y reseteamos los puntos del jugador actual para que no bloquee la lógica al volver
+                    db.ref(`players/${myId}`).update({ score: 0 });
+
+                    // 3. Borramos el estado de victoria para que el juego sepa que puede empezar otra vez
+                    db.ref('gameState').remove().then(() => {
+                        // 4. Solo recargamos cuando Firebase confirme que se borró el estado
+                        // Esto evita que al volver a entrar el juego crea que ya hay un ganador
+                        location.reload();
+                    });
+
+                    // Por si la conexión es lenta, forzamos la recarga a los 500ms si el .then no llega
+                    setTimeout(() => { location.reload(); }, 500);
+                });
+
+            };
+        }
+        function update() {
+    if (isStunned || hasWon || !playerContainer || !juegoIniciado) return;
+
+    const dist = Phaser.Math.Distance.Between(playerContainer.x, playerContainer.y, targetPos.x, targetPos.y);
+    
+    // --- NUEVO: Lógica de Rotación ---
+    if (dist > 5) { // Solo rotar si hay movimiento
+        // Calculamos el ángulo hacia el objetivo
+        let angle = Phaser.Math.Angle.Between(playerContainer.x, playerContainer.y, targetPos.x, targetPos.y);
+        
+        // Aplicamos la rotación al contenedor
+        // Si tu nave mira hacia arriba originalmente, suma Math.PI / 2 (90 grados)
+        playerContainer.rotation = angle + Math.PI / 2; 
+    }
+    // ---------------------------------
+
+    trailParticles.emitting = (dist > 5);
+    const progress = Math.min(score / WIN_SCORE, 1);
+    const currentLerp = LERP_START - (progress * (LERP_START - LERP_END));
+    
+    playerContainer.x = Phaser.Math.Linear(playerContainer.x, targetPos.x, currentLerp);
+    playerContainer.y = Phaser.Math.Linear(playerContainer.y, targetPos.y, currentLerp);
+
+    // Actualiza también la rotación en Firebase para que otros la vean
+    db.ref(`players/${myId}`).update({
+        x: playerContainer.x, 
+        y: playerContainer.y,
+        rotation: playerContainer.rotation // Sincronizamos la rotación
+    });
+}
+    </script>
+</body>
+
+</html>
